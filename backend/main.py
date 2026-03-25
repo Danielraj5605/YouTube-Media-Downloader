@@ -40,7 +40,42 @@ class DownloadRequest(BaseModel):
 class PlaylistDownloadRequest(BaseModel):
     url: str
     format_id: str
-    videos: List[Dict[str, Any]]  # list of {title, url} objects
+    videos: List[Dict[str, Any]]
+
+
+class CookiesRequest(BaseModel):
+    cookies: str
+
+
+# ─── Cookie management ────────────────────────────────────────
+
+COOKIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+
+
+@app.post("/api/set-cookies")
+async def set_cookies(request: CookiesRequest):
+    """Save YouTube cookies (Netscape format) to the server."""
+    try:
+        with open(COOKIES_FILE, 'w') as f:
+            f.write(request.cookies)
+        # Also set env var so downloader picks it up
+        os.environ['YT_COOKIES'] = request.cookies
+        # Force downloader to recreate cookie file
+        from downloader import _ensure_cookies_file
+        import downloader
+        downloader._COOKIES_PATH = None
+        _ensure_cookies_file()
+        return {"status": "ok", "message": "Cookies saved successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/cookies-status")
+async def cookies_status():
+    """Check if cookies are configured."""
+    has_env = bool(os.environ.get('YT_COOKIES', '').strip())
+    has_file = os.path.exists(COOKIES_FILE) and os.path.getsize(COOKIES_FILE) > 0
+    return {"configured": has_env or has_file}
 
 
 @app.post("/api/analyze")

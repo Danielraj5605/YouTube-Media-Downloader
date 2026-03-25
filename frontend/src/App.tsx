@@ -12,6 +12,9 @@ import {
   Moon,
   ListMusic,
   Package,
+  Cookie,
+  X,
+  ExternalLink,
 } from 'lucide-react';
 
 const API_BASE_URL = 'https://grabstream-backend.onrender.com';
@@ -70,6 +73,35 @@ function App() {
     document.documentElement.classList.toggle('dark', dark);
     localStorage.setItem('sg-theme', dark ? 'dark' : 'light');
   }, [dark]);
+
+  // ─── Cookie state ───
+  const [cookiesConfigured, setCookiesConfigured] = useState(true); // assume true until checked
+  const [showCookieModal, setShowCookieModal] = useState(false);
+  const [cookieText, setCookieText] = useState('');
+  const [cookieSaving, setCookieSaving] = useState(false);
+  const [cookieMsg, setCookieMsg] = useState('');
+
+  useEffect(() => {
+    axios.get(`${API_BASE_URL}/api/cookies-status`).then(r => {
+      setCookiesConfigured(r.data.configured);
+    }).catch(() => {});
+  }, []);
+
+  const saveCookies = async () => {
+    if (!cookieText.trim()) return;
+    setCookieSaving(true);
+    setCookieMsg('');
+    try {
+      await axios.post(`${API_BASE_URL}/api/set-cookies`, { cookies: cookieText });
+      setCookiesConfigured(true);
+      setCookieMsg('✓ Cookies saved!');
+      setTimeout(() => { setShowCookieModal(false); setCookieMsg(''); }, 1200);
+    } catch {
+      setCookieMsg('Failed to save cookies.');
+    } finally {
+      setCookieSaving(false);
+    }
+  };
 
   // ─── App state ───
   const [url, setUrl] = useState('');
@@ -225,7 +257,19 @@ function App() {
             </div>
             <span className="text-2xl font-bold tracking-tight text-[var(--text-h)]">StreamGrab</span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowCookieModal(true)}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center border transition-all cursor-pointer ${
+                cookiesConfigured
+                  ? 'border-[var(--border)] bg-[var(--code-bg)] hover:border-[var(--accent)]'
+                  : 'border-amber-500/50 bg-amber-500/10 hover:bg-amber-500/20'
+              }`}
+              aria-label="Cookie settings"
+              title={cookiesConfigured ? 'Cookie settings' : 'Set up cookies to enable downloads'}
+            >
+              <Cookie size={18} className={cookiesConfigured ? 'text-[var(--text)]' : 'text-amber-500'} />
+            </button>
             <button
               onClick={() => setDark((d) => !d)}
               className="w-10 h-10 rounded-xl flex items-center justify-center border border-[var(--border)] bg-[var(--code-bg)] hover:border-[var(--accent)] transition-all cursor-pointer"
@@ -236,6 +280,70 @@ function App() {
           </div>
         </div>
       </nav>
+
+      {/* Cookie setup banner */}
+      {!cookiesConfigured && (
+        <div className="bg-amber-500/10 border-b border-amber-500/30 px-6 py-3">
+          <div className="max-w-4xl mx-auto flex items-center gap-3 text-sm">
+            <Cookie size={16} className="text-amber-500 shrink-0" />
+            <span className="text-amber-700 dark:text-amber-300 flex-1">
+              <strong>One-time setup needed:</strong> Paste YouTube cookies to enable downloads on this server.
+            </span>
+            <button
+              onClick={() => setShowCookieModal(true)}
+              className="text-amber-600 dark:text-amber-400 font-semibold hover:underline cursor-pointer whitespace-nowrap"
+            >
+              Set up now →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Cookie Modal */}
+      {showCookieModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.6)' }}>
+          <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-lg animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between p-6 border-b border-[var(--border)]">
+              <h3 className="text-lg font-bold text-[var(--text-h)]">YouTube Cookie Setup</h3>
+              <button onClick={() => setShowCookieModal(false)} className="text-[var(--text)] hover:text-[var(--text-h)] cursor-pointer"><X size={20} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="space-y-3 text-sm text-[var(--text)]">
+                <p className="font-semibold text-[var(--text-h)]">3 simple steps:</p>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-[var(--accent)] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+                  <span>Install <a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc" target="_blank" rel="noreferrer" className="text-[var(--accent)] font-semibold hover:underline inline-flex items-center gap-1">Get cookies.txt LOCALLY <ExternalLink size={12} /></a> Chrome extension</span>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-[var(--accent)] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+                  <span>Go to <a href="https://youtube.com" target="_blank" rel="noreferrer" className="text-[var(--accent)] font-semibold hover:underline">youtube.com</a> (make sure you're signed in), click the extension → Export</span>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="w-6 h-6 rounded-full bg-[var(--accent)] text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
+                  <span>Open the downloaded <code className="bg-[var(--code-bg)] px-1.5 py-0.5 rounded text-xs">cookies.txt</code>, copy everything, paste below</span>
+                </div>
+              </div>
+              <textarea
+                value={cookieText}
+                onChange={(e) => setCookieText(e.target.value)}
+                placeholder="# Netscape HTTP Cookie File\n# Paste your cookies.txt content here..."
+                className="w-full h-32 bg-[var(--code-bg)] border border-[var(--border)] rounded-xl p-4 text-sm font-mono text-[var(--text-h)] placeholder:text-[var(--text)]/40 outline-none focus:border-[var(--accent)] resize-none"
+              />
+              {cookieMsg && (
+                <p className={`text-sm font-medium ${cookieMsg.startsWith('✓') ? 'text-emerald-500' : 'text-red-500'}`}>{cookieMsg}</p>
+              )}
+              <button
+                onClick={saveCookies}
+                disabled={cookieSaving || !cookieText.trim()}
+                className="w-full bg-[var(--accent)] text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:brightness-110 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                {cookieSaving ? <Loader2 className="animate-spin" size={18} /> : <Cookie size={18} />}
+                {cookieSaving ? 'Saving...' : 'Save Cookies'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-4xl mx-auto px-6 py-12">
         {/* Hero Section */}
