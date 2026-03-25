@@ -1,17 +1,50 @@
 import yt_dlp
 import os
-from typing import Dict, Any, List, Callable, Optional
+import tempfile
+from typing import Dict, Any, List, Optional
+
+# ── Cookie support ──────────────────────────────────────────────
+# If the env var  YT_COOKIES  is set (contents of a Netscape cookies.txt),
+# write it to a temp file once and pass it to every yt-dlp call.
+_COOKIES_PATH: Optional[str] = None
 
 
-def get_video_info(url: str) -> Dict[str, Any]:
-    """Fast analysis — uses flat extraction for playlists (near-instant)."""
-    ydl_opts = {
+def _ensure_cookies_file() -> Optional[str]:
+    """Lazily write the YT_COOKIES env var to a temp file and return its path."""
+    global _COOKIES_PATH
+    if _COOKIES_PATH and os.path.exists(_COOKIES_PATH):
+        return _COOKIES_PATH
+
+    raw = os.environ.get('YT_COOKIES', '').strip()
+    if not raw:
+        return None
+
+    fd, path = tempfile.mkstemp(suffix='.txt', prefix='yt_cookies_')
+    with os.fdopen(fd, 'w') as f:
+        f.write(raw)
+    _COOKIES_PATH = path
+    return path
+
+
+def _base_opts() -> Dict[str, Any]:
+    """Base yt-dlp options shared by every call, including cookie auth."""
+    opts: Dict[str, Any] = {
         'quiet': True,
         'no_warnings': True,
     }
+    cookie_path = _ensure_cookies_file()
+    if cookie_path:
+        opts['cookiefile'] = cookie_path
+    return opts
+
+
+# ── Analysis ────────────────────────────────────────────────────
+
+def get_video_info(url: str) -> Dict[str, Any]:
+    """Fast analysis — uses flat extraction for playlists (near-instant)."""
 
     # First: detect if it's a playlist using flat extraction (instant)
-    flat_opts = {**ydl_opts, 'extract_flat': 'in_playlist'}
+    flat_opts = {**_base_opts(), 'extract_flat': 'in_playlist'}
     with yt_dlp.YoutubeDL(flat_opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
@@ -19,7 +52,6 @@ def get_video_info(url: str) -> Dict[str, Any]:
 
     if is_playlist:
         entries = list(info.get('entries', []))
-        # For playlists, get formats from the first video only (fast)
         first_url = None
         if entries:
             first_url = entries[0].get('url') or entries[0].get('webpage_url')
@@ -30,7 +62,7 @@ def get_video_info(url: str) -> Dict[str, Any]:
         first_thumb = None
         if first_url:
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
+                with yt_dlp.YoutubeDL(_base_opts()) as ydl2:
                     first_info = ydl2.extract_info(first_url, download=False)
                     formats = _extract_formats(first_info)
                     first_thumb = first_info.get('thumbnail')
@@ -56,8 +88,8 @@ def get_video_info(url: str) -> Dict[str, Any]:
             ]
         }
 
-    # Single video — extract fully (fast, just 1 video)
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    # Single video
+    with yt_dlp.YoutubeDL(_base_opts()) as ydl:
         info = ydl.extract_info(url, download=False)
 
     formats = _extract_formats(info)
@@ -73,8 +105,9 @@ def get_video_info(url: str) -> Dict[str, Any]:
     }
 
 
+# ── Format helpers ──────────────────────────────────────────────
+
 def _default_formats() -> List[Dict]:
-    """Safe default format options when extraction fails."""
     return [
         {'format_id': 'best[ext=mp4]', 'resolution': 'Best Quality', 'ext': 'mp4', 'note': 'Auto', 'needs_merge': False},
         {'format_id': 'best', 'resolution': 'Best Available', 'ext': 'mp4', 'note': 'Auto', 'needs_merge': False},
@@ -83,20 +116,16 @@ def _default_formats() -> List[Dict]:
 
 
 def _extract_formats(info: Dict) -> List[Dict]:
-    """Extract and deduplicate formats grouped by resolution."""
     seen_resolutions = set()
     formats = []
-
     raw_formats = info.get('formats', [])
 
-    # Pass 1 — combined (muxed) formats: both video + audio
     combined = sorted(
         [f for f in raw_formats
          if f.get('vcodec', 'none') != 'none' and f.get('acodec', 'none') != 'none'],
         key=lambda f: (f.get('height') or 0, f.get('tbr') or 0),
         reverse=True
     )
-
     for f in combined:
         res = f.get('height')
         if res and res not in seen_resolutions:
@@ -112,14 +141,12 @@ def _extract_formats(info: Dict) -> List[Dict]:
                 'needs_merge': False,
             })
 
-    # Pass 2 — video-only to fill missing resolutions
     video_only = sorted(
         [f for f in raw_formats
          if f.get('vcodec', 'none') != 'none' and f.get('height')],
         key=lambda f: (f.get('height') or 0, f.get('tbr') or 0),
         reverse=True
     )
-
     for f in video_only:
         res = f.get('height')
         if res and res not in seen_resolutions:
@@ -135,7 +162,6 @@ def _extract_formats(info: Dict) -> List[Dict]:
                 'needs_merge': True,
             })
 
-    # Audio-only
     formats.append({
         'format_id': 'bestaudio',
         'resolution': 'Audio Only',
@@ -143,12 +169,12 @@ def _extract_formats(info: Dict) -> List[Dict]:
         'note': 'Best Audio',
         'needs_merge': False,
     })
-
     return formats
 
 
+# ── Download ────────────────────────────────────────────────────
+
 def _build_format_string(format_id: str) -> str:
-    """Build a yt-dlp format string that avoids requiring ffmpeg."""
     if format_id == 'bestaudio':
         return 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best'
     elif format_id.startswith('best'):
@@ -158,28 +184,22 @@ def _build_format_string(format_id: str) -> str:
 
 
 def download_video(url: str, format_id: str, output_path: str, progress_hook=None):
-    """Download a single video. Works WITHOUT ffmpeg."""
     outtmpl = os.path.join(output_path, '%(title)s.%(ext)s')
 
     ydl_opts = {
+        **_base_opts(),
         'format': _build_format_string(format_id),
         'outtmpl': outtmpl,
         'progress_hooks': [progress_hook] if progress_hook else [],
-        'quiet': True,
-        'no_warnings': True,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-
         if info and 'requested_downloads' in info:
-            final_path = info['requested_downloads'][0].get('filepath')
+            return info['requested_downloads'][0].get('filepath')
         elif info:
-            final_path = ydl.prepare_filename(info)
-        else:
-            final_path = None
-
-        return final_path
+            return ydl.prepare_filename(info)
+        return None
 
 
 def download_playlist_video(
@@ -189,11 +209,6 @@ def download_playlist_video(
     output_path: str,
     progress_hook=None
 ) -> Optional[str]:
-    """Download a single video from a playlist.
-    
-    video_url may be a full URL or just a video ID.
-    """
     if not video_url.startswith('http'):
         video_url = f"https://www.youtube.com/watch?v={video_url}"
-
     return download_video(video_url, format_id, output_path, progress_hook)
