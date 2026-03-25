@@ -14,7 +14,7 @@ import {
   Package,
 } from 'lucide-react';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'https://grabstream-backend.onrender.com';
 
 interface VideoFormat {
   format_id: string;
