@@ -27,11 +27,28 @@ def _ensure_cookies_file() -> Optional[str]:
 
 
 def _base_opts() -> Dict[str, Any]:
-    """Base yt-dlp options shared by every call, including cookie auth."""
+    """Base yt-dlp options shared by every call.
+    
+    Uses Android/TV player clients to bypass YouTube bot detection
+    on server IPs — no cookies needed.
+    """
     opts: Dict[str, Any] = {
         'quiet': True,
         'no_warnings': True,
+        # Use player clients that don't trigger bot detection on servers
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web'],
+            }
+        },
+        'http_headers': {
+            'User-Agent': (
+                'com.google.android.youtube/19.29.37 '
+                '(Linux; U; Android 14) gzip'
+            ),
+        },
     }
+    # If cookies are available (optional bonus), use them too
     cookie_path = _ensure_cookies_file()
     if cookie_path:
         opts['cookiefile'] = cookie_path
